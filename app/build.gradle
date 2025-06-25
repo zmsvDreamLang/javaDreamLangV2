@@ -8,6 +8,12 @@
 plugins {
     // Apply the application plugin to add support for building a CLI application in Java.
     id 'application'
+    // Static analysis plugins
+    id 'checkstyle'
+    id 'pmd'
+    id 'com.github.spotbugs' version '6.0.4'
+    // Code formatting plugin
+    id 'com.diffplug.spotless' version '6.25.0'
 }
 
 repositories {
@@ -23,6 +29,20 @@ dependencies {
 
     // This dependency is used by the application.
     implementation libs.guava
+
+    // SpotBugs annotations
+    compileOnly 'com.github.spotbugs:spotbugs-annotations:4.8.3'
+}
+
+// 解决依赖冲突
+configurations.configureEach {
+
+    resolutionStrategy {
+        // 强制使用特定版本的 Guava
+        force 'com.google.guava:guava:33.0.0-jre'
+        // 排除冲突的 google-collections
+        exclude group: 'com.google.collections', module: 'google-collections'
+    }
 }
 
 // Apply a specific Java toolchain to ease working on different environments.
@@ -40,4 +60,219 @@ application {
 tasks.named('test') {
     // Use JUnit Platform for unit tests.
     useJUnitPlatform()
+}
+
+// ==============================================
+// 代码格式化配置
+// ==============================================
+
+spotless {
+    java {
+        target 'src/**/*.java'
+
+        // 使用 Google Java Format
+        googleJavaFormat('1.19.2')
+
+        // 或者使用 Eclipse formatter
+        // eclipse()
+
+        // 移除未使用的导入
+        removeUnusedImports()
+
+        // 格式化导入顺序
+        importOrder('java', 'javax', 'org', 'com', '')
+
+        // 处理行尾
+        endWithNewline()
+
+        // 移除尾随空格
+        trimTrailingWhitespace()
+    }
+}
+
+/* ==============================================
+   静态分析配置
+   ==============================================
+
+   导入 SpotBugs 枚举类型 */
+
+import com.github.spotbugs.snom.Effort
+import com.github.spotbugs.snom.Confidence
+
+// Checkstyle 配置
+checkstyle {
+    toolVersion = '10.12.7'
+    configFile = file("${project.rootDir}/config/checkstyle/checkstyle-light.xml")
+    ignoreFailures = true
+    showViolations = true
+}
+
+// PMD 配置
+pmd {
+    toolVersion = '7.0.0'
+    ruleSetFiles = files("${project.rootDir}/config/pmd/pmd-rules.xml")
+    ignoreFailures = true
+    consoleOutput = true
+}
+
+// SpotBugs 配置
+spotbugs {
+    toolVersion = '4.8.3'
+    effort = Effort.valueOf('MAX')
+    reportLevel = Confidence.valueOf('LOW')
+    ignoreFailures = true
+}
+
+spotbugsMain {
+    reports {
+        html {
+            required = true
+            outputLocation = file("build/reports/spotbugs/main.html")
+            stylesheet = 'fancy-hist.xsl'
+        }
+        xml {
+            required = false
+        }
+    }
+}
+
+spotbugsTest {
+    reports {
+        html {
+            required = true
+            outputLocation = file("build/reports/spotbugs/test.html")
+        }
+        xml {
+            required = false
+        }
+    }
+}
+
+// ==============================================
+// 自定义静态分析任务
+// ==============================================
+
+// 宽松静态分析 - 用于日常开发
+tasks.register('staticAnalysisLight') {
+    group = 'verification'
+    description = '运行宽松的静态分析检查'
+    dependsOn 'checkstyleMain', 'pmdMain', 'spotbugsMain'
+
+    doLast {
+        println '==============================================='
+        println '轻量静态分析完成'
+        println '报告位置:'
+        println "  Checkstyle: build/reports/checkstyle/"
+        println "  PMD: build/reports/pmd/"
+        println "  SpotBugs: build/reports/spotbugs/"
+        println ''
+        println '如需修复代码格式问题，请运行:'
+        println '  gradle spotlessApply'
+        println '==============================================='
+    }
+}
+
+// 严格静态分析 - 用于发布前检查
+tasks.register('staticAnalysisStrict') {
+    group = 'verification'
+    description = '运行严格的静态分析检查'
+    dependsOn 'checkstyleMainStrict', 'checkstyleTestStrict', 'pmdMain', 'pmdTest', 'spotbugsMain', 'spotbugsTest'
+
+    doLast {
+        println '==============================================='
+        println '严格静态分析完成 - 所有检查必须通过'
+        println '报告位置:'
+        println "  Checkstyle: build/reports/checkstyle/"
+        println "  PMD: build/reports/pmd/"
+        println "  SpotBugs: build/reports/spotbugs/"
+        println '==============================================='
+    }
+}
+
+// 生成完整的静态分析报告
+tasks.register('staticAnalysisReport') {
+    group = 'verification'
+    description = '生成完整的静态分析报告'
+    dependsOn 'staticAnalysisLight'
+
+    doLast {
+        def reportsDir = file("build/reports/static-analysis")
+        reportsDir.mkdirs()
+
+        def reportFile = file("$reportsDir/summary.txt")
+        reportFile.text = """
+静态分析报告汇总
+================
+
+生成时间: ${new Date()}
+
+报告文件位置:
+- Checkstyle: build/reports/checkstyle/
+- PMD: build/reports/pmd/
+- SpotBugs: build/reports/spotbugs/
+
+使用说明:
+- 日常开发: gradle staticAnalysisLight
+- 发布前检查: gradle staticAnalysisStrict
+- 生成报告: gradle staticAnalysisReport
+"""
+
+        println "完整报告已生成: $reportFile.absolutePath"
+    }
+}
+
+// 清理静态分析报告
+tasks.register('cleanStaticAnalysis') {
+    group = 'verification'
+    description = '清理静态分析报告'
+
+    doLast {
+        delete fileTree("build/reports/checkstyle")
+        delete fileTree("build/reports/pmd")
+        delete fileTree("build/reports/spotbugs")
+        delete file("build/reports/static-analysis")
+        println '静态分析报告已清理'
+    }
+}
+
+// 严格模式的 Checkstyle 配置
+tasks.register('checkstyleMainStrict', Checkstyle) {
+    group = 'verification'
+    description = '严格模式 Checkstyle 检查主代码'
+    source = sourceSets.main.allJava
+    classpath = files()
+    configFile = file("${project.rootDir}/config/checkstyle/checkstyle.xml")
+    reports {
+        xml.required = false
+        html.required = true
+        html.outputLocation = file("build/reports/checkstyle/main-strict.html")
+    }
+    ignoreFailures = false
+}
+
+tasks.register('checkstyleTestStrict', Checkstyle) {
+    group = 'verification'
+    description = '严格模式 Checkstyle 检查测试代码'
+    source = sourceSets.test.allJava
+    classpath = files()
+    configFile = file("${project.rootDir}/config/checkstyle/checkstyle.xml")
+    reports {
+        xml.required = false
+        html.required = true
+        html.outputLocation = file("build/reports/checkstyle/test-strict.html")
+    }
+    ignoreFailures = false
+}
+
+// 格式化代码并运行静态分析
+tasks.register('formatAndAnalyze') {
+    group = 'verification'
+    description = '格式化代码并运行静态分析'
+    dependsOn 'spotlessApply', 'staticAnalysisLight'
+
+    doLast {
+        println '==============================================='
+        println '代码格式化和静态分析完成'
+        println '==============================================='
+    }
 }
