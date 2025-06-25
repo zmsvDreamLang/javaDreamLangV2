@@ -1,6 +1,9 @@
 package org.dreamlang.lexer;
 
+import java.io.Serial;
+
 public class LexicalException extends RuntimeException {
+  @Serial
   private static final long serialVersionUID = 1L;
 
   private final String errorType;
